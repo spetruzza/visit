@@ -12,36 +12,30 @@
  **                                                **
  ****************************************************/
 
-#include "pidx_idx_io.h"
-#include "PIDX.h"
-
 #include <InvalidFilesException.h>
 #include <DebugStream.h>
 #include <cstdarg>
 #include <string>
+
+#ifdef PARALLEL
+#include <mpi.h>
+#include <avtParallel.h>
+#define PIDX_MPI_COMM VISIT_MPI_COMM
+#else 
+#define PIDX_MPI_COMM MPI_COMM_WORLD
+#endif
+
 #include "pidx_idx_io.h"
-#include "PIDX.h"
-//#include "data_handle/PIDX_data_types.h"
 
 static PIDX_point global_size, local_offset, local_size;
 static PIDX_file pidx_file;
 static String input_filename;
 
-#define PIDX_HAVE_MPI 1
-
-#if PIDX_HAVE_MPI
-static MPI_Comm NEW_COMM_WORLD;
-#endif
-
 static int process_count = 1, rank = 0;
 
 static void terminate(int out)
 {
-#if PIDX_HAVE_MPI
-  MPI_Abort(NEW_COMM_WORLD, out);
-#else
-  EXCEPTION1(InvalidFilesException, "PIDX terminated.");
-#endif
+  MPI_Abort(PIDX_MPI_COMM, out);
 }
 
 static void terminate_with_error_msg(const char *format, ...)
@@ -55,8 +49,6 @@ static void terminate_with_error_msg(const char *format, ...)
 
 void init_mpi()
 {
-
-#ifdef MPI_VERSION//PIDX_HAVE_MPI
   int mpi_init;
   MPI_Initialized(&mpi_init);
   
@@ -64,35 +56,34 @@ void init_mpi()
     if (MPI_Init(NULL, NULL) != MPI_SUCCESS)
       terminate_with_error_msg("ERROR: MPI_Init error\n");
   }
-  MPI_Comm_dup(MPI_COMM_WORLD, &NEW_COMM_WORLD);
-  if (MPI_Comm_size(NEW_COMM_WORLD, &process_count) != MPI_SUCCESS)
-    terminate_with_error_msg("ERROR: MPI_Comm_size error\n");
-  if (MPI_Comm_rank(NEW_COMM_WORLD, &rank) != MPI_SUCCESS)
+  // MPI_Comm_dup(PIDX_MPI_COMM, &NEW_COMM_WORLD);
+  // if (MPI_Comm_size(NEW_COMM_WORLD, &process_count) != MPI_SUCCESS)
+  //   terminate_with_error_msg("ERROR: MPI_Comm_size error\n");
+  if (MPI_Comm_rank(PIDX_MPI_COMM, &rank) != MPI_SUCCESS)
     terminate_with_error_msg("ERROR: MPI_Comm_rank error\n");
-#endif
 }
 
 VisitIDXIO::DTypes convertType(PIDX_data_type intype){
   
-  if(strcmp(intype,INT8) == 0)
+  if(strcmp(intype,PIDX_DType.INT8) == 0)
     return VisitIDXIO::IDX_INT8;
-  else if(strcmp(intype,UINT8) == 0)
+  else if(strcmp(intype,PIDX_DType.UINT8) == 0)
     return VisitIDXIO::IDX_UINT8;
-  else if(strcmp(intype, INT16)==0)
+  else if(strcmp(intype, PIDX_DType.INT16)==0)
     return VisitIDXIO::IDX_INT16;
-  else if(strcmp(intype, UINT16)==0)
+  else if(strcmp(intype, PIDX_DType.UINT16)==0)
     return VisitIDXIO::IDX_UINT16;
-  else if(strcmp(intype, INT32)==0)
+  else if(strcmp(intype, PIDX_DType.INT32)==0)
     return VisitIDXIO::IDX_INT32;
-  else if(strcmp(intype, UINT32)==0)
+  else if(strcmp(intype, PIDX_DType.UINT32)==0)
     return VisitIDXIO::IDX_UINT32;
-  else if(strcmp(intype, INT64)==0)
+  else if(strcmp(intype, PIDX_DType.INT64)==0)
     return VisitIDXIO::IDX_INT64;
-  else if(strcmp(intype, UINT64)==0)
+  else if(strcmp(intype, PIDX_DType.UINT64)==0)
     return VisitIDXIO::IDX_UINT64;
-  else if(strcmp(intype,FLOAT32)==0)
+  else if(strcmp(intype, PIDX_DType.FLOAT32)==0)
     return VisitIDXIO::IDX_FLOAT32;
-  else if(strcmp(intype, FLOAT64)==0){
+  else if(strcmp(intype, PIDX_DType.FLOAT64)==0){
     return VisitIDXIO::IDX_FLOAT64;
   }
   
@@ -156,8 +147,8 @@ bool PIDXIO::openDataset(const String filename){
   if (ret != PIDX_success)  terminate_with_error_msg("PIDX_get_last_tstep");
 
 #ifdef PARALELL  
-  MPI_Bcast(&first_tstep, 1, MPI_INT, 0, NEW_COMM_WORLD);
-  MPI_Bcast(&last_tstep, 1, MPI_INT, 0, NEW_COMM_WORLD);
+  MPI_Bcast(&first_tstep, 1, MPI_INT, 0, PIDX_MPI_COMM);
+  MPI_Bcast(&last_tstep, 1, MPI_INT, 0, PIDX_MPI_COMM);
 #endif
   
   tsteps.clear();
@@ -196,11 +187,18 @@ bool PIDXIO::openDataset(const String filename){
   //  if(rank == 0){    
       VisitIDXIO::Field my_field;
 
-      my_field.ncomponents = atoi((const char*)(variable[var]->type_name)); // trick to resolve type easilty and get ncomponents
+      my_field.ncomponents = variable[var]->vps;//atoi((const char*)(variable[var]->type_name)); 
       char typetocheck[32];
       strncpy(typetocheck, variable[var]->type_name, 32);
-      typetocheck[0] = '1';
-      my_field.type = convertType(typetocheck);
+      if(isdigit(typetocheck[0])){
+        typetocheck[0] = '1';
+        my_field.type = convertType(typetocheck);
+      }
+      else{
+        char temp_type[64];
+        sprintf(temp_type, "%d*%s", my_field.ncomponents, typetocheck);
+        my_field.type = convertType(temp_type);
+      }
       
       my_field.isVector = my_field.ncomponents > 1 ? true : false;
 
@@ -305,9 +303,7 @@ unsigned char* PIDXIO::getData(const VisitIDXIO::Box box, const int timestate, c
   
   PIDX_access pidx_access;
   PIDX_create_access(&pidx_access);
-#if PIDX_HAVE_MPI
-  PIDX_set_mpi_access(pidx_access, MPI_COMM_WORLD);
-#endif
+  PIDX_set_mpi_access(pidx_access, PIDX_MPI_COMM);
 
   ret = PIDX_file_open(input_filename.c_str(), PIDX_MODE_RDONLY, pidx_access, global_size, &pidx_file);
   if (ret != PIDX_success)  terminate_with_error_msg("PIDX_file_create");

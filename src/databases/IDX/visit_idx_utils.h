@@ -19,6 +19,8 @@
 #include <vector>
 #include <cassert>
 #include <algorithm>
+#include <functional>
+#include <cctype>
 
 static inline int        cint   (std::string s) {int    value;std::istringstream iss(s);iss>>value;return value;}
 static inline float      cfloat (std::string s) {float  value;std::istringstream iss(s);iss>>value;return value;}

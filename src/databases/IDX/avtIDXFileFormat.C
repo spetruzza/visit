@@ -1,6 +1,6 @@
 /*****************************************************************************
 *
-* Copyright (c) 2000 - 2017, Lawrence Livermore National Security, LLC
+* Copyright (c) 2000 - 2019, Lawrence Livermore National Security, LLC
 * Produced at the Lawrence Livermore National Laboratory
 * LLNL-CODE-442911
 * All rights reserved.
@@ -80,14 +80,17 @@
 #include <avtMultiresSelection.h>
 #include <avtStructuredDomainNesting.h>
 #include <avtCallback.h>
-#include <avtView2D.h>
-#include <avtView3D.h>
 
 #include <DBOptionsAttributes.h>
 #include <Expression.h>
 
 #include <InvalidVariableException.h>
+
+#ifdef _WIN32
+#include <win_dirent.h>
+#else
 #include <dirent.h>
+#endif
 
 #include "uintah_utils.h"
 #include "visit_idx_utils.h"
@@ -310,7 +313,7 @@ void avtIDXFileFormat::domainDecomposition(){
     }
 #endif
 
-  level_info.patchInfo.swap(newboxes);
+  level_info.patchInfo=newboxes;
 
   // if(rank == 0){ 
   // std::cout<< "Total number of boxes/domains: " << level_info.patchInfo.size() << std::endl<< std::flush;
@@ -547,84 +550,73 @@ void avtIDXFileFormat::createTimeIndex(){
   timeIndex.clear();
   logTimeIndex.clear();
 
+  // try to get timesteps metadata from uintah index.xml file
   vtkSmartPointer<vtkXMLDataParser> parser = vtkSmartPointer<vtkXMLDataParser>::New();
   size_t folder_point = dataset_filename.find_last_of("/\\");
   String folder = dataset_filename.substr(0,folder_point);
 
+  bool time_from_uintah = false;
   String udafilename = folder + "/index.xml";
   debug5 <<"looking for index.xml here " << udafilename.c_str() << std::endl;
 
   parser->SetFileName(udafilename.c_str());
-  if (!parser->Parse()){
+  if (parser->Parse()){
     parser->SetFileName(metadata_filename.c_str());
-    if (!parser->Parse()){
-      debug5 << "No metadata XML file found " << udafilename << std::endl;
+  
+    debug4 << udafilename << " file found" << std::endl;
 
-      std::vector<double> times = reader->getTimes();
+    vtkXMLDataElement *root = parser->GetRootElement();
+    vtkXMLDataElement *tsteps = root->FindNestedElementWithName("timesteps");
+    if(tsteps != NULL){
+      time_from_uintah=true;
+      int ntimesteps = tsteps->GetNumberOfNestedElements();
 
+      debug4 << "Found " << ntimesteps << " timesteps" << std::endl;
+
+      for(int i=0; i < ntimesteps; i++){
+
+        vtkXMLDataElement *xmltime = tsteps->GetNestedElement(i);
+        String timestr(xmltime->GetAttribute("time"));
+        String logtimestr(xmltime->GetCharacterData());
+
+        debug4 << "time " << timestr << " index " << logtimestr << std::endl;
+       
+        double time = cdouble(timestr);
+        int logtime = cint(logtimestr);
+
+        logTimeIndex.push_back(logtime);
+
+        timeIndex.push_back(time);
+      }
+    }
+    else
+      fprintf(stderr, "No timesteps field found in index.xml, no physical time available\n");
+  }
+
+  if(!time_from_uintah){
+    std::vector<double> times = reader->getTimes();
+    debug4 << "adding " << times.size() << " timesteps " << std::endl;
+
+    if(is_gidx){
+        for(int i=0; i< gidx_datasets.size(); i++){
+         timeIndex.push_back(gidx_datasets[i].log_time);
+         logTimeIndex.push_back(gidx_datasets[i].log_time);            
+           } 
+      }else{
       for(int i=0; i< times.size(); i++){
         timeIndex.push_back(times.at(i));
-        logTimeIndex.push_back(times.at(i));
+        logTimeIndex.push_back(times.at(i));            
       }
-
-      return;
     }
   }
 
-  debug4 << "Found metadata file" << std::endl;
-  
-  vtkXMLDataElement *root = parser->GetRootElement();
-  vtkXMLDataElement *level = root->FindNestedElementWithName("timesteps");
-  if(level != NULL){
-    int ntimesteps = level->GetNumberOfNestedElements();
+  debug4 << "loaded " << timeIndex.size() << " timesteps"<< std::endl;
+  debug4 << reader->getNTimesteps() << " in the timesteps range of the IDX file" << std::endl;
 
-    debug4 << "Found " << ntimesteps << " timesteps" << std::endl;
-  
-    for(int i=0; i < ntimesteps; i++){
+      //if(timeIndex.size() != reader->getNTimesteps())
+      //  std::cout << "ERROR: the timesteps in the IDX file and in the index.xml are not consistent!\n You will not be able to use the physical time"<< std::endl;
 
-      vtkXMLDataElement *xmltime = level->GetNestedElement(i);
-      String timestr(xmltime->GetAttribute("time"));
-      String logtimestr(xmltime->GetCharacterData());
-
-      debug4 << "time " << timestr << " index " << logtimestr << std::endl;
-     
-      double time = cdouble(timestr);
-      int logtime = cint(logtimestr);
-
-      logTimeIndex.push_back(logtime);
-
-      timeIndex.push_back(time);
-    }
-  }
-  else{
-    fprintf(stderr, "No timesteps field found in index.xml, no physical time available\n");
-
-    if(is_gidx)
-    {
-      for(int i=0; i< gidx_datasets.size(); i++){
-       timeIndex.push_back(gidx_datasets[i].log_time);
-       logTimeIndex.push_back(gidx_datasets[i].log_time);            
-     } 
-
-   }else
-   {
-    std::vector<double> times = reader->getTimes();
-
-    for(int i=0; i< times.size(); i++){
-      timeIndex.push_back(times.at(i));
-      logTimeIndex.push_back(times.at(i));            
-    }
-  }
-
-}
-
-debug4 << "loaded " << timeIndex.size() << " timesteps"<< std::endl;
-debug4 << reader->getNTimesteps() << " in the timesteps range of the IDX file" << std::endl;
-
-    //if(timeIndex.size() != reader->getNTimesteps())
-    //  std::cout << "ERROR: the timesteps in the IDX file and in the index.xml are not consistent!\n You will not be able to use the physical time"<< std::endl;
-
-return;
+  return;
 
 }
 
@@ -1467,7 +1459,7 @@ avtIDXFileFormat::GetCycles(std::vector<int> &cycles)
   cycles.clear();
 
   if(logTimeIndex.size()>0)
-    cycles.swap(logTimeIndex);
+    cycles=logTimeIndex;
   else{
     for(int i = 0; i < reader->getNTimesteps(); ++i)
       cycles.push_back(i);
@@ -1477,7 +1469,7 @@ avtIDXFileFormat::GetCycles(std::vector<int> &cycles)
 void
 avtIDXFileFormat::GetTimes(std::vector<double> &times)
 {
-  times.swap(timeIndex);
+  times=timeIndex;
 }
 
 vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char *varname){
@@ -1552,18 +1544,19 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
   reverse_endian = reverse_endian * !reader->isCompressed();
 
   if(type == VisitIDXIO::IDX_UINT8){
+
     vtkUnsignedCharArray*rv = vtkUnsignedCharArray::New();
     rv->SetNumberOfComponents(ncomponents); //<ctc> eventually handle vector data, since visit can actually render it!
     
     if(isVector && dim < 3){
 
       unsigned char* newdata = convertTo3Components<unsigned char>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((unsigned char*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<unsigned char>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((unsigned char*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else
-        rv->SetArray((unsigned char*)data,ncomponents*ntuples,1/*delete when done*/,vtkDataArrayTemplate<unsigned char>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((unsigned char*)data,ncomponents*ntuples,1/*delete when done*/,0);
       return rv;
   }
   else if(type == VisitIDXIO::IDX_UINT16){
@@ -1574,12 +1567,12 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     if(isVector && dim < 3){
 
       unsigned short* newdata = convertTo3Components<unsigned short>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((unsigned short*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<unsigned short>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((unsigned short*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else
-      rv->SetArray((unsigned short*)data,ncomponents*ntuples,1,vtkDataArrayTemplate<unsigned short>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((unsigned short*)data,ncomponents*ntuples,1,0);
     
     if(reverse_endian){
       unsigned short *buff = (unsigned short *) rv->GetVoidPointer(0);
@@ -1600,12 +1593,12 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     if(isVector && dim < 3){
 
       unsigned int* newdata = convertTo3Components<unsigned int>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((unsigned int*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<unsigned int>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((unsigned int*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else
-      rv->SetArray((unsigned int*)data,ncomponents*ntuples,1,vtkDataArrayTemplate<unsigned int>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((unsigned int*)data,ncomponents*ntuples,1,0);
     
     if(reverse_endian){
       unsigned int *buff = (unsigned int *) rv->GetVoidPointer(0);
@@ -1626,12 +1619,12 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     if(isVector && dim < 3){
 
       char* newdata = convertTo3Components<char>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((char*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<char>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((char*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else
-      rv->SetArray((char*)data,ncomponents*ntuples,1,vtkDataArrayTemplate<char>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((char*)data,ncomponents*ntuples,1,0);
     
     return rv;
   }
@@ -1642,12 +1635,12 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     if(isVector && dim < 3){
 
       short* newdata = convertTo3Components<short>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((short*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<short>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((short*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else
-      rv->SetArray((short*)data,ncomponents*ntuples,1,vtkDataArrayTemplate<short>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((short*)data,ncomponents*ntuples,1,0);
     
     if(reverse_endian){
       short *buff = (short *) rv->GetVoidPointer(0);
@@ -1668,12 +1661,12 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     if(isVector && dim < 3){
 
       int* newdata = convertTo3Components<int>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((int*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<int>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((int*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else
-      rv->SetArray((int*)data,ncomponents*ntuples,1,vtkDataArrayTemplate<int>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((int*)data,ncomponents*ntuples,1,0);
     
     if(reverse_endian){
       int *buff = (int *) rv->GetVoidPointer(0);
@@ -1695,12 +1688,12 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     if(isVector && dim < 3){
 
       long* newdata = convertTo3Components<long>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((long*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<long>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((long*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else
-      rv->SetArray((long*)data,ncomponents*ntuples,1,vtkDataArrayTemplate<long>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((long*)data,ncomponents*ntuples,1,0);
     
     if(reverse_endian){
       long *buff = (long *) rv->GetVoidPointer(0);
@@ -1721,12 +1714,12 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     
     if(isVector && dim < 3){
       float* newdata = convertTo3Components<float>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((float*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<int>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((float*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else{
-      rv->SetArray((float*)data,ncomponents*ntuples,1,vtkDataArrayTemplate<int>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((float*)data,ncomponents*ntuples,1,0);
     }
     
     if(reverse_endian){
@@ -1763,13 +1756,13 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     if(isVector && dim < 3){
 
       double* newdata = convertTo3Components<double>(data, field.ncomponents, 3, ntuples);
-      rv->SetArray((double*)newdata,ncomponents*ntuples,1,vtkDataArrayTemplate<double>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((double*)newdata,ncomponents*ntuples,1,0);
 
       delete data;
     }
     else{
      // printf("DOUBLE converting %d \n", ncomponents*ntuples);
-      rv->SetArray((double*)data,ncomponents*ntuples,1,vtkDataArrayTemplate<double>::VTK_DATA_ARRAY_FREE);
+      rv->SetArray((double*)data,ncomponents*ntuples,1,0);
     }
 
     if(reverse_endian){
