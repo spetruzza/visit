@@ -4,7 +4,7 @@
 
 using namespace VisitIDXIO;
 
-bool uintah_debug_input = true;
+bool uintah_debug_input = false;
 
 void ups_parse_vector(vtkXMLDataElement *el, double* vec, int dim){
   std::string el_str(el->GetCharacterData());
@@ -274,7 +274,7 @@ void parse_ups(vtkSmartPointer<vtkXMLDataParser> parser, LevelInfo& level_info, 
       }
       else{ // multibox case 
         box.low[k] = cround(std::fabs(p1phy[k]-level_info.anchor[k]) / phy2log[k]);// + eCells[k];
-	printf("low[%d] %d p1phy %f\n", k, box.low[k], p1phy[k]);
+	//printf("low[%d] %d p1phy %f\n", k, box.low[k], p1phy[k]);
         // if(k==0 && low[k]>0)
         //   low[k] += 1;
         box.high[k] = box.low[k] + resdata[k];
