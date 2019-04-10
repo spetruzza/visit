@@ -139,6 +139,29 @@ std::vector<int> computeGrid(int num)
     return grid;
 }
 
+bool isNewEdit(const std::map<int,int>& edited,const  int b,const int d){
+    if(edited.find(b) == edited.end())
+      return true;
+
+    return edited.find(b)->second != d;
+}
+
+bool moreInternal(int* acent, int* bcent, int* center){
+    float adist=0, bdist=0;
+    for(int i=0;i<3; i++){
+        adist+=std::pow(center[i]-acent[i],2);
+        bdist+=std::pow(center[i]-bcent[i],2);
+    }
+    // adist=std::sqrt(adist);
+    // bdist=std::sqrt(bdist);
+
+    return std::sqrt(adist) < std::sqrt(bdist);
+}
+
+int getDirection(bool dir, int axis){
+    return dir ? axis : axis*2;
+}
+
 void avtIDXFileFormat::domainDecomposition()
 {
     level_info.patchInfo.clear();
@@ -196,21 +219,163 @@ void avtIDXFileFormat::domainDecomposition()
 #endif
         for(int nb=0; nb<c; nb++)
         {
-          int bid[3] = {nb % block_decomp[0], (nb / block_decomp[0]) % block_decomp[1], nb / (block_decomp[0] * block_decomp[1])};
-          //printf("bid %d %d %d\n", bid[0], bid[1], bid[2]);
-          int curr_p1[3] = {box_low[0]+(bid[0]*block_dim[0]),box_low[1]+(bid[1]*block_dim[1]),box_low[2]+(bid[2]*block_dim[2])};
-          int curr_p2[3] = {curr_p1[0]+block_dim[0], curr_p1[1]+block_dim[1], curr_p1[2]+block_dim[2]};
+            int bid[3] = {nb % block_decomp[0], (nb / block_decomp[0]) % block_decomp[1], nb / (block_decomp[0] * block_decomp[1])};
+            //printf("bid %d %d %d\n", bid[0], bid[1], bid[2]);
+            int curr_p1[3] = {box_low[0]+(bid[0]*block_dim[0]),box_low[1]+(bid[1]*block_dim[1]),box_low[2]+(bid[2]*block_dim[2])};
+            int curr_p2[3] = {curr_p1[0]+block_dim[0], curr_p1[1]+block_dim[1], curr_p1[2]+block_dim[2]};
 
-          // add residual to patches at the boundaries
-          for(int d=0; d<3; d++)
-            if(curr_p2[d]+residual[d]==box_high[d])
-               curr_p2[d] += residual[d];
+            // add residual to patches at the boundaries
+            for(int d=0; d<3; d++)
+            {   
+                // if(uintah_metadata && use_extracells)
+                // {
+                //     curr_p1[d] = curr_p1[d] > 0 ? curr_p1[d]+2 : curr_p1[d];
+                //     curr_p2[d] = (curr_p2[d] < global_size[d]) ? curr_p2[d] : global_size[d];
+                // }
 
-           PatchInfo newbox;
-           newbox.setBounds(curr_p1,curr_p2,eCells,grid_type);
-           newboxes.push_back(newbox);
+                if(curr_p2[d]+residual[d]==box_high[d])
+                    curr_p2[d] += residual[d];
+
+            }
+
+            // if(i==1){
+            //     curr_p1[0] = curr_p1[0]+2;
+            //     curr_p1[1] = curr_p1[1]+1;
+            //     curr_p1[2] = curr_p1[2]+2;
+
+            //     curr_p2[1] = curr_p2[1]-2;
+            //     curr_p2[2] = curr_p2[2]-2;
+                
+            // }
+            // else if(i==3)
+            //     curr_p2[1] = curr_p2[1]-1;
+
+            PatchInfo newbox;
+            newbox.setBounds(curr_p1,curr_p2,eCells,grid_type);
+            newboxes.push_back(newbox);
+
         }
     }
+
+#if 1
+    int center[3] = {global_size[0]/2,global_size[1]/2, global_size[2]/2};
+
+    for(int b1=0; b1 < newboxes.size(); b1++)
+    {   
+        PatchInfo& a=newboxes[b1];
+        int alow[3], ahigh[3]; int aeCells[6];
+        a.getBounds(alow,ahigh,aeCells,grid_type);
+        int acenter[3]; 
+        for(int k=0;k<3;k++) acenter[k]=(ahigh[k]-alow[k])/2;
+
+        std::map<int,int> edited;
+
+        for(int b2=b1+1; b2 < newboxes.size(); b2++){
+            PatchInfo& b=newboxes[b2];
+            int blow[3], bhigh[3]; int beCells[6];
+            b.getBounds(blow,bhigh,beCells,grid_type);
+            int bcenter[3]; 
+            for(int k=0;k<3;k++) bcenter[k]=(bhigh[k]-blow[k])/2;
+
+            bool over[3];
+
+            int inter_low[3];
+            int inter_high[3];
+
+            bool box_touch = touch(over, alow,ahigh,blow,bhigh, inter_low,inter_high);
+            
+            int count_zeros=0;
+            for(int k=0; k< 3; k++)
+                if(inter_high[k]-inter_low[k] == 0)
+                    count_zeros++;
+
+            if(box_touch && ((over[0]+over[1]+over[2]) == 1) && count_zeros < 2)
+            {
+                bool achange=b1>b2;//moreInternal(acenter, bcenter, center);
+
+                int maxd = -999999;
+                int d=-1;
+                
+                for(int k=0; k<3; k++)
+                    if(over[k]) d=k;
+
+                // int sum_over=1;
+                // for(int k=0; k<3; k++){
+                //     if(over[k]){
+                //         int size=inter_high[k]-inter_low[k]+1;
+                //         if(size>maxd){
+                //             maxd=size;
+                //             d=k;
+                //         }
+                //     }
+                //     sum_over*=(inter_high[k]-inter_low[k]+1);
+                // }
+                int size=inter_high[d]-inter_low[d]+1;
+
+                if(d!=-1 && size > 0){
+                    bool orientation = alow[d] < blow[d];
+                    int dir = getDirection(orientation, d);
+
+                    bool ashorter = true;
+                    for(int ai=0; ai < 3 && ai != d; ai++){
+                        ashorter *= std::abs((((ahigh[ai]-alow[ai]) - (bhigh[ai]-blow[ai])))) > 2;
+                    }
+                    
+                  if(achange && isNewEdit(edited, b1, d)){//alow[d] > blow[d] && isNewEdit(edited, b1,d)){
+                    printf("a* [%d %d %d, %d %d %d] b [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
+                    printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
+            
+                    printf("size inter[%d]=%d ashorter %d\n", d, size, ashorter);
+
+                    if(orientation){
+                        ahigh[d]-=1;
+                        //if(!ashorter)
+                            blow[d]+=1;
+                    }
+                    else{ //if(ahigh[d] > blow[d])
+                        alow[d]+=1;
+                        //if(!ashorter)
+                            bhigh[d]-=1;
+                    }
+
+                    //alow[d] = inter_high[d]+2;
+                  }
+                  else if(isNewEdit(edited, b2, d)){
+                    printf("a [%d %d %d, %d %d %d] b* [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
+                    printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
+            
+                    printf("size inter[%d]=%d ashorter %d\n", d, size, ashorter);
+                    //blow[d]+=2;
+
+                    if(orientation){
+                        blow[d]+=1;
+                        //if(!ashorter)
+                            ahigh[d]-=1;
+                    }
+                    else{//if(bhigh[d] > alow[d])
+                        bhigh[d]-=1;
+                        alow[d]+=1;
+                        //if(ashorter)
+                            
+                    }  
+                    //blow[d] = inter_high[d]+2;
+                  }
+
+                  edited[b1]=d;
+                  edited[b2]=d;
+
+                  a.setBounds(alow,ahigh, beCells, grid_type);
+                  b.setBounds(blow,bhigh, beCells, grid_type);
+                  
+                }
+                //if(inter_low[d] > alow[d] && inter_low[d] < ahigh[d])
+                
+                
+                
+            }
+        }
+    }
+#endif
 
     level_info.patchInfo=newboxes;
 #if 0
@@ -824,11 +989,11 @@ avtIDXFileFormat::SetUpDomainConnectivity(const char* meshname)
 void avtIDXFileFormat::computeDomainBoundaries(const char* meshname, int timestate)
 {
   //if (!avtDatabase::OnlyServeUpMetaData() && level_info.patchInfo.size()>0 ){
-
+/*
 #ifdef MDSERVER
     return;
 #else
-
+*/
     avtRectilinearDomainBoundaries *rdb =
     new avtRectilinearDomainBoundaries(true);
     rdb->SetNumDomains(level_info.patchInfo.size());
@@ -845,11 +1010,33 @@ void avtIDXFileFormat::computeDomainBoundaries(const char* meshname, int timesta
         //  low[1]+extracells[2], high[1]+extracells[3],
         //  low[2]+extracells[4], high[2]+extracells[5]};
 
+        if(domain == 1){
+            //low[1]+=2;
+        }
+        else if(domain == 3){
+            //high[0]-=1;
+            //high[1]-=2;
+            //printf("doining\n");
+        }
+#if 0 
+        for(int k=0;k<3; k++){
+          if (high[k] < ghigh[k]){
+            //printf("edit high %d\n",k);
+            high[k]+=2;
+          }
+                                                                                                                                               
+          /*if(low[k] > glow[k]){                                                                                                                  
+            //printf("edit low %d\n",k);                                                                                                           
+            low[k]+=2;                                                                                                                           
+          }*/
+        }
+#endif
         int e[6] = { low[0], high[0],
            low[1], high[1],
            low[2], high[2]};
-           rdb->SetIndicesForAMRPatch(domain,0,e);
-    //printf("domain %d ext %d %d %d, %d %d %d\n", domain, low[0],low[1],low[2],high[0],high[1],high[2]);
+        rdb->SetIndicesForAMRPatch(domain,0,e);
+
+        printf("domain %d ext %d %d %d, %d %d %d\n", domain, low[0],low[1],low[2],high[0],high[1],high[2]);
     }
 
     rdb->CalculateBoundaries();
@@ -862,7 +1049,7 @@ void avtIDXFileFormat::computeDomainBoundaries(const char* meshname, int timesta
         fprintf(stderr,"pidx boundary mesh not registered\n");
     //canDoStreaming = false;
     //printf("%d: DONE compute domain boundary\n", rank);
-#endif
+//#endif
 }
 
 
@@ -897,7 +1084,7 @@ avtIDXFileFormat::GetMesh(int timestate, int domain, const char *meshname)
     vtkRectilinearGrid *rgrid = vtkRectilinearGrid::New();
 
 #if USE_AMR
-    //SetUpDomainConnectivity(mesh->name.c_str());
+    //SetUpDomainConnectivity(meshname);
     computeDomainBoundaries(meshname, timestate);
 #else
     SetUpDomainConnectivity(meshname);
@@ -982,13 +1169,14 @@ avtIDXFileFormat::GetMesh(int timestate, int domain, const char *meshname)
          //   printf("high %d[%d]: %f\n", domain,c, array[i]);
         }
 
-        switch(c) {
-          case 0:
-          rgrid->SetXCoordinates(coords); break;
-          case 1:
-          rgrid->SetYCoordinates(coords); break;
-          case 2:
-          rgrid->SetZCoordinates(coords); break;
+        switch(c)
+        {
+            case 0:
+                rgrid->SetXCoordinates(coords); break;
+            case 1:
+                rgrid->SetYCoordinates(coords); break;
+            case 2:
+                rgrid->SetZCoordinates(coords); break;
         }
 
         coords->Delete();
@@ -1018,7 +1206,7 @@ avtIDXFileFormat::GetMesh(int timestate, int domain, const char *meshname)
     ghostNodes->SetName("avtGhostNodes");
     ghostNodes->Allocate(nNodes);
 
-    int dim_block[3] = {my_dims[0]-1,my_dims[1]-1,my_dims[2]-1};
+    int dim_block[3] = {my_dims[0],my_dims[1],my_dims[2]};
 
     //printf("NCELLS %d dims %d %d %d\n", nCells, dim_block[0],dim_block[1],dim_block[2]);
 
@@ -1146,8 +1334,10 @@ avtIDXFileFormat::GetMesh(int timestate, int domain, const char *meshname)
   //rgrid->GetCellData()->AddArray(ghostCells);
   rgrid->GetPointData()->AddArray(ghostNodes);
 
-  vtkStreamingDemandDrivenPipeline::SetUpdateGhostLevel(
-    rgrid->GetInformation(), 0);
+  // The following is commented cause do not exist in VisIt 3
+  // vtkStreamingDemandDrivenPipeline::SetUpdateGhostLevel(
+  //   rgrid->GetInformation(), 0);
+
   ghostCells->Delete();
   ghostNodes->Delete();
 
@@ -1190,7 +1380,7 @@ vtkDataArray* avtIDXFileFormat::queryToVtk(int timestate, int domain, const char
     {
         if(uintah_metadata)
         {
-          //if(!use_extracells) // cause uintah low starts from -1
+            // cause uintah low starts from -1
             low[k]++;
             high[k] += sfc_offset[k];
         }
