@@ -259,102 +259,106 @@ void avtIDXFileFormat::domainDecomposition()
     }
 
 #if 1
-    int center[3] = {global_size[0]/2,global_size[1]/2, global_size[2]/2};
+    // Fix domains boundaries when use extracells with Uintah
+    if(uintah_metadata && use_extracells)
+    {
+        int center[3] = {global_size[0]/2,global_size[1]/2, global_size[2]/2};
 
-    for(int b1=0; b1 < newboxes.size(); b1++)
-    {   
-        PatchInfo& a=newboxes[b1];
-        int alow[3], ahigh[3]; int aeCells[6];
-        a.getBounds(alow,ahigh,aeCells,grid_type);
+        for(int b1=0; b1 < newboxes.size(); b1++)
+        {   
+            PatchInfo& a=newboxes[b1];
+            int alow[3], ahigh[3]; int aeCells[6];
+            a.getBounds(alow,ahigh,aeCells,grid_type);
 
-        std::map<int,int> edited;
+            std::map<int,int> edited;
 
-        for(int b2=b1+1; b2 < newboxes.size(); b2++)
-        {
-            PatchInfo& b=newboxes[b2];
-            int blow[3], bhigh[3]; int beCells[6];
-            b.getBounds(blow,bhigh,beCells,grid_type);
-
-            bool over[3];
-
-            int inter_low[3];
-            int inter_high[3];
-
-            int count_zeros=0;
-            for(int k=0; k< 3; k++)
-                if(inter_high[k]-inter_low[k] == 0)
-                    count_zeros++;
-
-            bool box_touch = touch(over, alow,ahigh,blow,bhigh, inter_low,inter_high) 
-                            && ((over[0]+over[1]+over[2]) == 1) 
-                            && count_zeros < 2;
-
-            if(box_touch)
+            for(int b2=b1+1; b2 < newboxes.size(); b2++)
             {
-                int d=-1;
-                
-                for(int k=0; k<3; k++)
-                    if(over[k]) d=k;
+                PatchInfo& b=newboxes[b2];
+                int blow[3], bhigh[3]; int beCells[6];
+                b.getBounds(blow,bhigh,beCells,grid_type);
 
-                int size=inter_high[d]-inter_low[d]+1;
+                bool over[3];
 
-                if(d!=-1 && size > 0){
-                    bool orientation = alow[d] < blow[d];
-                    int dir = getDirection(orientation, d);
+                int inter_low[3];
+                int inter_high[3];
 
-                    int ashorter = 0;
-                    int bshorter = 0;
+                int count_zeros=0;
+                for(int k=0; k< 3; k++)
+                    if(inter_high[k]-inter_low[k] == 0)
+                        count_zeros++;
 
-                    for(int ai=0; ai < 3; ai++)
-                    {
-                        if(ai == d) continue;
-                        if ((ahigh[ai]-alow[ai]) < (bhigh[ai]-blow[ai]))
-                            ashorter++;
-                        else if((ahigh[ai]-alow[ai]) > (bhigh[ai]-blow[ai]))
-                            bshorter++;
+                bool box_touch = touch(over, alow,ahigh,blow,bhigh, inter_low,inter_high) 
+                                && ((over[0]+over[1]+over[2]) == 1) 
+                                && count_zeros < 2;
+
+                if(box_touch)
+                {
+                    int d=-1;
+                    
+                    for(int k=0; k<3; k++)
+                        if(over[k]) d=k;
+
+                    int size=inter_high[d]-inter_low[d]+1;
+
+                    if(d!=-1 && size > 0){
+                        bool orientation = alow[d] < blow[d];
+                        int dir = getDirection(orientation, d);
+
+                        int ashorter = 0;
+                        int bshorter = 0;
+
+                        for(int ai=0; ai < 3; ai++)
+                        {
+                            if(ai == d) continue;
+                            if ((ahigh[ai]-alow[ai]) < (bhigh[ai]-blow[ai]))
+                                ashorter++;
+                            else if((ahigh[ai]-alow[ai]) > (bhigh[ai]-blow[ai]))
+                                bshorter++;
+                        }
+
+                        bool changea=true;
+                        bool changeb=true;
+
+                        if(ashorter==2)
+                            changeb=false;
+                        if(bshorter==2)
+                            changea=false;
+
+                        int remove_size = 1;
+
+                      if(changea && isNewEdit(edited, b1, dir)){//alow[d] > blow[d] && isNewEdit(edited, b1,d)){
+                        // printf("a* [%d %d %d, %d %d %d] b [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
+                        // printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
+                        // printf("size inter[%d]=%d ashorter %d bshorter %d\n", d, size, ashorter, bshorter);
+                        if(orientation){
+                            ahigh[d]-=remove_size;
+                        }
+                        else{ 
+                            alow[d]+=remove_size;
+                        }
+                         // printf("NEW a [%d %d %d, %d %d %d] dir %d\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], dir);
+                        edited[b1]=dir;
+                      }
+
+                      if(changeb && isNewEdit(edited, b2, dir)){
+                        // printf("a [%d %d %d, %d %d %d] b* [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
+                        // printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
+                        // printf("size inter[%d]=%d ashorter %d bshorter %d \n", d, size, ashorter, bshorter);
+                        if(orientation){
+                            blow[d]+=remove_size;
+                        }
+                        else{
+                            bhigh[d]-=remove_size;
+                        }
+                        // printf("NEW b [%d %d %d, %d %d %d] dir %d\n", blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2], dir);
+                        edited[b2]=dir;
+                      }
+
+                      a.setBounds(alow,ahigh, beCells, grid_type);
+                      b.setBounds(blow,bhigh, beCells, grid_type);
+                      
                     }
-
-                    bool changea=true;
-                    bool changeb=true;
-
-                    if(ashorter==2)
-                        changeb=false;
-                    if(bshorter==2)
-                        changea=false;
-
-                    int remove_size = 1;
-
-                  if(changea && isNewEdit(edited, b1, dir)){//alow[d] > blow[d] && isNewEdit(edited, b1,d)){
-                    // printf("a* [%d %d %d, %d %d %d] b [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
-                    // printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
-                    // printf("size inter[%d]=%d ashorter %d bshorter %d\n", d, size, ashorter, bshorter);
-                    if(orientation){
-                        ahigh[d]-=remove_size;
-                    }
-                    else{ 
-                        alow[d]+=remove_size;
-                    }
-                     // printf("NEW a [%d %d %d, %d %d %d] dir %d\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], dir);
-                    edited[b1]=dir;
-                  }
-
-                  if(changeb && isNewEdit(edited, b2, dir)){
-                    // printf("a [%d %d %d, %d %d %d] b* [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
-                    // printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
-                    // printf("size inter[%d]=%d ashorter %d bshorter %d \n", d, size, ashorter, bshorter);
-                    if(orientation){
-                        blow[d]+=remove_size;
-                    }
-                    else{
-                        bhigh[d]-=remove_size;
-                    }
-                    // printf("NEW b [%d %d %d, %d %d %d] dir %d\n", blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2], dir);
-                    edited[b2]=dir;
-                  }
-
-                  a.setBounds(alow,ahigh, beCells, grid_type);
-                  b.setBounds(blow,bhigh, beCells, grid_type);
-                  
                 }
             }
         }
@@ -374,7 +378,7 @@ void avtIDXFileFormat::domainDecomposition()
 #endif
     if(level_info.patchInfo.size() % nprocs != 0)
     {
-        fprintf(stderr,"ERROR: wrong domain decomposition, patches %d procs %d\n", level_info.patchInfo.size(), nprocs);
+        fprintf(stderr,"ERROR: wrong domain decomposition, patches %lu procs %d\n", level_info.patchInfo.size(), nprocs);
         assert(false);
     }
 }
@@ -570,8 +574,6 @@ avtIDXFileFormat::avtIDXFileFormat(const char *filename, DBOptionsAttributes* at
             reverse_endian = attrs->GetBool("Big Endian");
         else if (attrs->GetName(i) == "Use extra cells") 
             use_extracells = attrs->GetBool("Use extra cells");
-        else if (attrs->GetName(i) == "Use RAW format") 
-            use_raw = attrs->GetBool("Use RAW format");
     }
 
     debug4 << "--------------------------" << std::endl;
@@ -579,11 +581,6 @@ avtIDXFileFormat::avtIDXFileFormat(const char *filename, DBOptionsAttributes* at
         debug4 << "Using extra cells" << std::endl;
     else
         debug4 << "Not using extra cells" << std::endl;
-
-    if(use_raw)
-        debug4 << "Using RAW format" << std::endl;
-    else
-        debug4 << "Not using RAW format" << std::endl;
 
     if(reverse_endian)
         debug4 << "Using Big Endian" << std::endl;
