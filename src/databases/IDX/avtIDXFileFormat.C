@@ -159,7 +159,7 @@ bool moreInternal(int* acent, int* bcent, int* center){
 }
 
 int getDirection(bool dir, int axis){
-    return dir ? axis : axis*2;
+    return dir ? axis : axis+3;
 }
 
 void avtIDXFileFormat::domainDecomposition()
@@ -245,10 +245,11 @@ void avtIDXFileFormat::domainDecomposition()
 
             //     curr_p2[1] = curr_p2[1]-2;
             //     curr_p2[2] = curr_p2[2]-2;
-                
             // }
-            // else if(i==3)
+            // else if(i==3){
             //     curr_p2[1] = curr_p2[1]-1;
+            //     curr_p1[0] = curr_p1[0]+2;
+            // }
 
             PatchInfo newbox;
             newbox.setBounds(curr_p1,curr_p2,eCells,grid_type);
@@ -265,113 +266,96 @@ void avtIDXFileFormat::domainDecomposition()
         PatchInfo& a=newboxes[b1];
         int alow[3], ahigh[3]; int aeCells[6];
         a.getBounds(alow,ahigh,aeCells,grid_type);
-        int acenter[3]; 
-        for(int k=0;k<3;k++) acenter[k]=(ahigh[k]-alow[k])/2;
 
         std::map<int,int> edited;
 
-        for(int b2=b1+1; b2 < newboxes.size(); b2++){
+        for(int b2=b1+1; b2 < newboxes.size(); b2++)
+        {
             PatchInfo& b=newboxes[b2];
             int blow[3], bhigh[3]; int beCells[6];
             b.getBounds(blow,bhigh,beCells,grid_type);
-            int bcenter[3]; 
-            for(int k=0;k<3;k++) bcenter[k]=(bhigh[k]-blow[k])/2;
 
             bool over[3];
 
             int inter_low[3];
             int inter_high[3];
 
-            bool box_touch = touch(over, alow,ahigh,blow,bhigh, inter_low,inter_high);
-            
             int count_zeros=0;
             for(int k=0; k< 3; k++)
                 if(inter_high[k]-inter_low[k] == 0)
                     count_zeros++;
 
-            if(box_touch && ((over[0]+over[1]+over[2]) == 1) && count_zeros < 2)
-            {
-                bool achange=b1>b2;//moreInternal(acenter, bcenter, center);
+            bool box_touch = touch(over, alow,ahigh,blow,bhigh, inter_low,inter_high) 
+                            && ((over[0]+over[1]+over[2]) == 1) 
+                            && count_zeros < 2;
 
-                int maxd = -999999;
+            if(box_touch)
+            {
                 int d=-1;
                 
                 for(int k=0; k<3; k++)
                     if(over[k]) d=k;
 
-                // int sum_over=1;
-                // for(int k=0; k<3; k++){
-                //     if(over[k]){
-                //         int size=inter_high[k]-inter_low[k]+1;
-                //         if(size>maxd){
-                //             maxd=size;
-                //             d=k;
-                //         }
-                //     }
-                //     sum_over*=(inter_high[k]-inter_low[k]+1);
-                // }
                 int size=inter_high[d]-inter_low[d]+1;
 
                 if(d!=-1 && size > 0){
                     bool orientation = alow[d] < blow[d];
                     int dir = getDirection(orientation, d);
 
-                    bool ashorter = true;
-                    for(int ai=0; ai < 3 && ai != d; ai++){
-                        ashorter *= std::abs((((ahigh[ai]-alow[ai]) - (bhigh[ai]-blow[ai])))) > 2;
-                    }
-                    
-                  if(achange && isNewEdit(edited, b1, d)){//alow[d] > blow[d] && isNewEdit(edited, b1,d)){
-                    printf("a* [%d %d %d, %d %d %d] b [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
-                    printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
-            
-                    printf("size inter[%d]=%d ashorter %d\n", d, size, ashorter);
+                    int ashorter = 0;
+                    int bshorter = 0;
 
+                    for(int ai=0; ai < 3; ai++)
+                    {
+                        if(ai == d) continue;
+                        if ((ahigh[ai]-alow[ai]) < (bhigh[ai]-blow[ai]))
+                            ashorter++;
+                        else if((ahigh[ai]-alow[ai]) > (bhigh[ai]-blow[ai]))
+                            bshorter++;
+                    }
+
+                    bool changea=true;
+                    bool changeb=true;
+
+                    if(ashorter==2)
+                        changeb=false;
+                    if(bshorter==2)
+                        changea=false;
+
+                    int remove_size = 1;
+
+                  if(changea && isNewEdit(edited, b1, dir)){//alow[d] > blow[d] && isNewEdit(edited, b1,d)){
+                    // printf("a* [%d %d %d, %d %d %d] b [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
+                    // printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
+                    // printf("size inter[%d]=%d ashorter %d bshorter %d\n", d, size, ashorter, bshorter);
                     if(orientation){
-                        ahigh[d]-=1;
-                        //if(!ashorter)
-                            blow[d]+=1;
+                        ahigh[d]-=remove_size;
                     }
-                    else{ //if(ahigh[d] > blow[d])
-                        alow[d]+=1;
-                        //if(!ashorter)
-                            bhigh[d]-=1;
+                    else{ 
+                        alow[d]+=remove_size;
                     }
-
-                    //alow[d] = inter_high[d]+2;
-                  }
-                  else if(isNewEdit(edited, b2, d)){
-                    printf("a [%d %d %d, %d %d %d] b* [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
-                    printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
-            
-                    printf("size inter[%d]=%d ashorter %d\n", d, size, ashorter);
-                    //blow[d]+=2;
-
-                    if(orientation){
-                        blow[d]+=1;
-                        //if(!ashorter)
-                            ahigh[d]-=1;
-                    }
-                    else{//if(bhigh[d] > alow[d])
-                        bhigh[d]-=1;
-                        alow[d]+=1;
-                        //if(ashorter)
-                            
-                    }  
-                    //blow[d] = inter_high[d]+2;
+                     // printf("NEW a [%d %d %d, %d %d %d] dir %d\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], dir);
+                    edited[b1]=dir;
                   }
 
-                  edited[b1]=d;
-                  edited[b2]=d;
+                  if(changeb && isNewEdit(edited, b2, dir)){
+                    // printf("a [%d %d %d, %d %d %d] b* [%d %d %d, %d %d %d]\n", alow[0], alow[1], alow[2], ahigh[0], ahigh[1], ahigh[2], blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2]);
+                    // printf("intersect [%d - %d] dir %d %d %d [%d %d %d, %d %d %d]\n", b1, b2, over[0], over[1], over[2], inter_low[0], inter_low[1], inter_low[2], inter_high[0], inter_high[1], inter_high[2]);
+                    // printf("size inter[%d]=%d ashorter %d bshorter %d \n", d, size, ashorter, bshorter);
+                    if(orientation){
+                        blow[d]+=remove_size;
+                    }
+                    else{
+                        bhigh[d]-=remove_size;
+                    }
+                    // printf("NEW b [%d %d %d, %d %d %d] dir %d\n", blow[0], blow[1], blow[2], bhigh[0], bhigh[1], bhigh[2], dir);
+                    edited[b2]=dir;
+                  }
 
                   a.setBounds(alow,ahigh, beCells, grid_type);
                   b.setBounds(blow,bhigh, beCells, grid_type);
                   
                 }
-                //if(inter_low[d] > alow[d] && inter_low[d] < ahigh[d])
-                
-                
-                
             }
         }
     }
