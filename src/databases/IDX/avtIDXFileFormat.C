@@ -259,8 +259,8 @@ void avtIDXFileFormat::domainDecomposition()
     }
 
 #if 1
-    // Fix domains boundaries when use extracells with Uintah
-    if(uintah_metadata && use_extracells)
+    // Fix domains boundaries when use extracells with Uintah (and not single box)
+    if(uintah_metadata && use_extracells && input_patches.patchInfo.size()>1)
     {
         int center[3] = {global_size[0]/2,global_size[1]/2, global_size[2]/2};
 
